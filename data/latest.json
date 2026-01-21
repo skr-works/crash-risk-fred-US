@@ -1,39 +1,14 @@
 {
   "asof": "2026-01-22",
   "horizon_bdays": 42,
-  "score": 44.681594812627026,
+  "p_event_any": 0.30570111281045614,
+  "score": 30.570111281045616,
   "regime": "平常",
-  "coverage": 1.0,
   "thresholds": {
-    "P60": 49.9925476337728,
-    "P80": 55.028344169175796,
-    "P92": 63.03332915530515
+    "notice_p": 0.3489843681728491,
+    "alert_p": 0.38351969671100966,
+    "crisis_p": 0.7120163858466697
   },
-  "block_scores": {
-    "景気パルス": -0.20220581685646,
-    "雇用": -0.09286877393612125,
-    "金利": -0.5612549078707865,
-    "信用": -1.1566651555717664,
-    "金融ストレス": -0.7807972941134169,
-    "市場ストレス": 0.24095745840952396
-  },
-  "top_drivers": [
-    {
-      "block": "雇用",
-      "series_key": "CCSA",
-      "z": 0.5807270195405682
-    },
-    {
-      "block": "市場ストレス",
-      "series_key": "SP500",
-      "z": 0.28792828516111685
-    },
-    {
-      "block": "景気パルス",
-      "series_key": "WEI",
-      "z": -0.20220581685646
-    }
-  ],
   "data_staleness": {
     "WEI": {
       "fred_id": "WEI",
@@ -124,12 +99,6 @@
     "FEDFUNDS_REF": 3.72,
     "UNRATE_REF": 4.4
   },
-  "backtest_summary": {
-    "crisis_days": 534,
-    "hit_rate_dd_2m": 0.16104868913857678,
-    "hit_rate_crash_1d_fwd": 0.02247191011235955,
-    "hit_rate_crash_3d_fwd": 0.0
-  },
   "definitions": {
     "regimes": [
       "平常",
@@ -138,9 +107,10 @@
       "危機"
     ],
     "events": {
-      "crash_1d_fwd": "42営業日以内に1日リターン<=-10%",
-      "crash_3d_fwd": "42営業日以内に3日累積リターン<=-15%",
-      "dd_2m": "42営業日以内に直近252営業日高値から-15%到達"
+      "crash_1d_fwd": "42営業日以内に(任意のuで)1日先リターン<=-10%",
+      "crash_3d_fwd": "42営業日以内に(任意のuで)3営業日先リターン<=-15%",
+      "dd_2m": "42営業日以内に直近252営業日高値から-15%到達",
+      "event_any": "上のいずれかが発生"
     },
     "stale_policy_A": {
       "daily": 7,
@@ -148,6 +118,529 @@
       "monthly": 120,
       "quarterly": 220
     },
-    "note": "スコア計算は日次・週次のみ。月次は参考表示のみ。週次が週末日付でも落ちないようにD→Bで整列。"
+    "note": "スコアは教師あり（event_anyの確率）。月次は参考表示のみ。週次が週末日付でも落ちないようにD→B整列。"
+  },
+  "backtest": {
+    "windows": {
+      "val_start": "2024-03-11",
+      "test_start": "2024-03-11",
+      "last_label_date": "2026-01-22"
+    },
+    "train_stats": {
+      "train_pos_rate": 0.2081841432225064,
+      "pos_weight": 3.803439803439803,
+      "train_loss_best": 0.8727813184774732,
+      "epochs": 800,
+      "l2": 1.0,
+      "lr": 0.05,
+      "batch": 4096
+    },
+    "picked_threshold_info": {
+      "threshold": 0.7120163858466697,
+      "days": 489,
+      "crisis_days": 5,
+      "crisis_share": 0.010224948875255624,
+      "base_event_any": 0.1083844580777096,
+      "base_dd_2m": 0.1083844580777096,
+      "base_crash_1d_fwd": 0.0,
+      "base_crash_3d_fwd": 0.0,
+      "hit_event_any": 1.0,
+      "lift_event_any": 9.226415094339623,
+      "hit_dd_2m": 1.0,
+      "lift_dd_2m": 9.226415094339623,
+      "hit_crash_1d_fwd": 0.0,
+      "lift_crash_1d_fwd": null,
+      "hit_crash_3d_fwd": 0.0,
+      "lift_crash_3d_fwd": null,
+      "objective": 2.9923312883435584
+    },
+    "metrics_val_at_picked_crisis": {
+      "threshold": 0.7120163858466697,
+      "days": 489,
+      "crisis_days": 5,
+      "crisis_share": 0.010224948875255624,
+      "base_event_any": 0.1083844580777096,
+      "base_dd_2m": 0.1083844580777096,
+      "base_crash_1d_fwd": 0.0,
+      "base_crash_3d_fwd": 0.0,
+      "hit_event_any": 1.0,
+      "lift_event_any": 9.226415094339623,
+      "hit_dd_2m": 1.0,
+      "lift_dd_2m": 9.226415094339623,
+      "hit_crash_1d_fwd": 0.0,
+      "lift_crash_1d_fwd": null,
+      "hit_crash_3d_fwd": 0.0,
+      "lift_crash_3d_fwd": null
+    },
+    "metrics_test_at_picked_crisis": {
+      "threshold": 0.7120163858466697,
+      "days": 489,
+      "crisis_days": 5,
+      "crisis_share": 0.010224948875255624,
+      "base_event_any": 0.1083844580777096,
+      "base_dd_2m": 0.1083844580777096,
+      "base_crash_1d_fwd": 0.0,
+      "base_crash_3d_fwd": 0.0,
+      "hit_event_any": 1.0,
+      "lift_event_any": 9.226415094339623,
+      "hit_dd_2m": 1.0,
+      "lift_dd_2m": 9.226415094339623,
+      "hit_crash_1d_fwd": 0.0,
+      "lift_crash_1d_fwd": null,
+      "hit_crash_3d_fwd": 0.0,
+      "lift_crash_3d_fwd": null
+    },
+    "by_regime_test": {
+      "平常": {
+        "days": 342,
+        "rate_event_any": 0.043859649122807015,
+        "rate_dd_2m": 0.043859649122807015,
+        "rate_crash_1d_fwd": 0.0,
+        "rate_crash_3d_fwd": 0.0,
+        "avg_p": 0.30259597568780766
+      },
+      "注意": {
+        "days": 73,
+        "rate_event_any": 0.0273972602739726,
+        "rate_dd_2m": 0.0273972602739726,
+        "rate_crash_1d_fwd": 0.0,
+        "rate_crash_3d_fwd": 0.0,
+        "avg_p": 0.3643454400917413
+      },
+      "警戒": {
+        "days": 69,
+        "rate_event_any": 0.4492753623188406,
+        "rate_dd_2m": 0.4492753623188406,
+        "rate_crash_1d_fwd": 0.0,
+        "rate_crash_3d_fwd": 0.0,
+        "avg_p": 0.48273828073908703
+      },
+      "危機": {
+        "days": 5,
+        "rate_event_any": 1.0,
+        "rate_dd_2m": 1.0,
+        "rate_crash_1d_fwd": 0.0,
+        "rate_crash_3d_fwd": 0.0,
+        "avg_p": 0.7888413881649201
+      }
+    },
+    "threshold_scan_val": [
+      {
+        "threshold": 0.36932831860918475,
+        "days": 489,
+        "crisis_days": 98,
+        "crisis_share": 0.20040899795501022,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.37755102040816324,
+        "lift_event_any": 3.4834424335772045,
+        "hit_dd_2m": 0.37755102040816324,
+        "lift_dd_2m": 3.4834424335772045,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.8
+      },
+      {
+        "threshold": 0.38351969671100966,
+        "days": 489,
+        "crisis_days": 74,
+        "crisis_share": 0.15132924335378323,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.4864864864864865,
+        "lift_event_any": 4.488526262111169,
+        "hit_dd_2m": 0.4864864864864865,
+        "lift_dd_2m": 4.488526262111169,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.85
+      },
+      {
+        "threshold": 0.4236707059990895,
+        "days": 489,
+        "crisis_days": 49,
+        "crisis_share": 0.10020449897750511,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.6326530612244898,
+        "lift_event_any": 5.837119753561803,
+        "hit_dd_2m": 0.6326530612244898,
+        "lift_dd_2m": 5.837119753561803,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.9
+      },
+      {
+        "threshold": 0.4619211115798451,
+        "days": 489,
+        "crisis_days": 40,
+        "crisis_share": 0.081799591002045,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.675,
+        "lift_event_any": 6.227830188679246,
+        "hit_dd_2m": 0.675,
+        "lift_dd_2m": 6.227830188679246,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.92
+      },
+      {
+        "threshold": 0.4939265922837394,
+        "days": 489,
+        "crisis_days": 30,
+        "crisis_share": 0.06134969325153374,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.6333333333333333,
+        "lift_event_any": 5.843396226415094,
+        "hit_dd_2m": 0.6333333333333333,
+        "lift_dd_2m": 5.843396226415094,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.94
+      },
+      {
+        "threshold": 0.5363217131968814,
+        "days": 489,
+        "crisis_days": 20,
+        "crisis_share": 0.0408997955010225,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.65,
+        "lift_event_any": 5.997169811320755,
+        "hit_dd_2m": 0.65,
+        "lift_dd_2m": 5.997169811320755,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.96
+      },
+      {
+        "threshold": 0.6859025204379063,
+        "days": 489,
+        "crisis_days": 10,
+        "crisis_share": 0.02044989775051125,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 1.0,
+        "lift_event_any": 9.226415094339623,
+        "hit_dd_2m": 1.0,
+        "lift_dd_2m": 9.226415094339623,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.98
+      }
+    ],
+    "threshold_scan_test": [
+      {
+        "threshold": 0.36932831860918475,
+        "days": 489,
+        "crisis_days": 98,
+        "crisis_share": 0.20040899795501022,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.37755102040816324,
+        "lift_event_any": 3.4834424335772045,
+        "hit_dd_2m": 0.37755102040816324,
+        "lift_dd_2m": 3.4834424335772045,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.8
+      },
+      {
+        "threshold": 0.38351969671100966,
+        "days": 489,
+        "crisis_days": 74,
+        "crisis_share": 0.15132924335378323,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.4864864864864865,
+        "lift_event_any": 4.488526262111169,
+        "hit_dd_2m": 0.4864864864864865,
+        "lift_dd_2m": 4.488526262111169,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.85
+      },
+      {
+        "threshold": 0.4236707059990895,
+        "days": 489,
+        "crisis_days": 49,
+        "crisis_share": 0.10020449897750511,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.6326530612244898,
+        "lift_event_any": 5.837119753561803,
+        "hit_dd_2m": 0.6326530612244898,
+        "lift_dd_2m": 5.837119753561803,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.9
+      },
+      {
+        "threshold": 0.4619211115798451,
+        "days": 489,
+        "crisis_days": 40,
+        "crisis_share": 0.081799591002045,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.675,
+        "lift_event_any": 6.227830188679246,
+        "hit_dd_2m": 0.675,
+        "lift_dd_2m": 6.227830188679246,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.92
+      },
+      {
+        "threshold": 0.4939265922837394,
+        "days": 489,
+        "crisis_days": 30,
+        "crisis_share": 0.06134969325153374,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.6333333333333333,
+        "lift_event_any": 5.843396226415094,
+        "hit_dd_2m": 0.6333333333333333,
+        "lift_dd_2m": 5.843396226415094,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.94
+      },
+      {
+        "threshold": 0.5363217131968814,
+        "days": 489,
+        "crisis_days": 20,
+        "crisis_share": 0.0408997955010225,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 0.65,
+        "lift_event_any": 5.997169811320755,
+        "hit_dd_2m": 0.65,
+        "lift_dd_2m": 5.997169811320755,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.96
+      },
+      {
+        "threshold": 0.6859025204379063,
+        "days": 489,
+        "crisis_days": 10,
+        "crisis_share": 0.02044989775051125,
+        "base_event_any": 0.1083844580777096,
+        "base_dd_2m": 0.1083844580777096,
+        "base_crash_1d_fwd": 0.0,
+        "base_crash_3d_fwd": 0.0,
+        "hit_event_any": 1.0,
+        "lift_event_any": 9.226415094339623,
+        "hit_dd_2m": 1.0,
+        "lift_dd_2m": 9.226415094339623,
+        "hit_crash_1d_fwd": 0.0,
+        "lift_crash_1d_fwd": null,
+        "hit_crash_3d_fwd": 0.0,
+        "lift_crash_3d_fwd": null,
+        "percentile": 0.98
+      }
+    ]
+  },
+  "debug": {
+    "latest_features": {
+      "WEI": {
+        "fred_id": "WEI",
+        "raw_level": 2.45,
+        "feature_value": -0.2400000000000002,
+        "z": -0.20220581685646,
+        "stale": false,
+        "last_obs_date": "2026-01-10",
+        "stale_days": 12
+      },
+      "ICSA": {
+        "fred_id": "ICSA",
+        "raw_level": 198000.0,
+        "feature_value": -0.08237099743312726,
+        "z": -0.7664645674128107,
+        "stale": false,
+        "last_obs_date": "2026-01-10",
+        "stale_days": 12
+      },
+      "CCSA": {
+        "fred_id": "CCSA",
+        "raw_level": 1884000.0,
+        "feature_value": 0.014973541790162415,
+        "z": 0.5807270195405682,
+        "stale": false,
+        "last_obs_date": "2026-01-03",
+        "stale_days": 19
+      },
+      "T10Y3M": {
+        "fred_id": "T10Y3M",
+        "raw_level": 0.6,
+        "feature_value": -0.6,
+        "z": -0.5612549078707865,
+        "stale": false,
+        "last_obs_date": "2026-01-20",
+        "stale_days": 2
+      },
+      "HY_OAS": {
+        "fred_id": "BAMLH0A0HYM2",
+        "raw_level": 2.73,
+        "feature_value": 2.62,
+        "z": -1.0736509387617679,
+        "stale": false,
+        "last_obs_date": "2026-01-20",
+        "stale_days": 2
+      },
+      "IG_OAS": {
+        "fred_id": "BAMLC0A0CM",
+        "raw_level": 0.75,
+        "feature_value": 0.71,
+        "z": -1.2396793723817652,
+        "stale": false,
+        "last_obs_date": "2026-01-20",
+        "stale_days": 2
+      },
+      "NFCI": {
+        "fred_id": "NFCI",
+        "raw_level": -0.57258,
+        "feature_value": -0.57258,
+        "z": -1.0557162222347982,
+        "stale": false,
+        "last_obs_date": "2026-01-09",
+        "stale_days": 13
+      },
+      "STLFSI4": {
+        "fred_id": "STLFSI4",
+        "raw_level": -0.6644,
+        "feature_value": -0.6644,
+        "z": -0.5058783659920355,
+        "stale": false,
+        "last_obs_date": "2026-01-09",
+        "stale_days": 13
+      },
+      "VIX": {
+        "fred_id": "VIXCLS",
+        "raw_level": 20.09,
+        "feature_value": 20.09,
+        "z": 0.19398663165793106,
+        "stale": false,
+        "last_obs_date": "2026-01-20",
+        "stale_days": 2
+      },
+      "SP500": {
+        "fred_id": "SP500",
+        "raw_level": 6796.86,
+        "feature_value": 0.009869757503688525,
+        "z": 0.5610079587655902,
+        "stale": false,
+        "last_obs_date": "2026-01-20",
+        "stale_days": 2
+      }
+    },
+    "coef_abs_sorted": [
+      {
+        "feature": "NFCI",
+        "coef": 0.2782821959868382
+      },
+      {
+        "feature": "IG_OAS",
+        "coef": 0.1707185764075372
+      },
+      {
+        "feature": "HY_OAS",
+        "coef": 0.15540988943957165
+      },
+      {
+        "feature": "VIX",
+        "coef": 0.14767057573949643
+      },
+      {
+        "feature": "CCSA",
+        "coef": 0.12159842259481202
+      },
+      {
+        "feature": "SP500",
+        "coef": 0.08951095488162052
+      },
+      {
+        "feature": "WEI",
+        "coef": 0.08781437231081132
+      },
+      {
+        "feature": "STLFSI4",
+        "coef": 0.06836687599635932
+      },
+      {
+        "feature": "ICSA",
+        "coef": -0.010945277342639744
+      },
+      {
+        "feature": "T10Y3M",
+        "coef": -0.007243848759479818
+      }
+    ],
+    "feature_keys": [
+      "WEI",
+      "ICSA",
+      "CCSA",
+      "T10Y3M",
+      "HY_OAS",
+      "IG_OAS",
+      "NFCI",
+      "STLFSI4",
+      "VIX",
+      "SP500"
+    ]
   }
 }
