@@ -37,7 +37,7 @@ SCORE_CENTER = 50.0
 SCORE_SCALE = 12.5
 Z_CLIP = 4.0
 
-# Use shorter rolling window than 10y because 2M horizon is short.
+# Shorter rolling window for 2M horizon
 ROLL_WIN_DAILY = 1260     # ~5 years business days
 ROLL_WIN_WEEKLY = 1260    # same index (we align to business days anyway)
 
@@ -58,7 +58,6 @@ ISSUE_COOLDOWN_DAYS = 14
 # =========================
 # Series (scoring uses only daily/weekly)
 # =========================
-
 # key: (fred_id, freq_group, feature_kind, use_for_score)
 SERIES = {
     # Economy pulse (weekly) - core replacement
@@ -83,7 +82,7 @@ SERIES = {
     "VIX":     ("VIXCLS", "daily", "level", True),
     "SP500":   ("SP500", "daily", "ret_2m_neg", True),
 
-    # Reference only (monthly/quarterly) - NOT used for score
+    # Reference only (monthly) - NOT used for score
     "FEDFUNDS_REF": ("FEDFUNDS", "monthly", "diff_1m", False),
     "UNRATE_REF":   ("UNRATE", "monthly", "diff_1m", False),
 }
@@ -170,6 +169,9 @@ def native_stale(freq_group: str, last_obs_date: pd.Timestamp, run_date: dt.date
     threshold = STALE_DAYS.get(freq_group, 21)
     return (delta_days, delta_days > threshold)
 
+def calendar_index(start: str, end_date: dt.date) -> pd.DatetimeIndex:
+    return pd.date_range(pd.Timestamp(start), pd.Timestamp(end_date), freq="D")
+
 def business_index(start: str, end_date: dt.date) -> pd.DatetimeIndex:
     return pd.bdate_range(pd.Timestamp(start), pd.Timestamp(end_date), freq="B")
 
@@ -225,7 +227,6 @@ def prune_history(df: pd.DataFrame, run_date: dt.date, years: int) -> pd.DataFra
 # =========================
 
 def compute_feature(kind: str, s: pd.Series) -> pd.Series:
-    b_1w = 5
     b_4w = 20
     b_1m = 21
     b_2m = 42
@@ -249,7 +250,6 @@ def compute_feature(kind: str, s: pd.Series) -> pd.Series:
         return -(s.pct_change(b_2m))
 
     if kind == "level_plus_diff_1m":
-        # level + speed of widening (both risk-up)
         return s + (s - s.shift(b_1m))
 
     raise ValueError(f"Unknown feature kind: {kind}")
@@ -266,7 +266,6 @@ def compute_forward_events(sp500: pd.Series) -> pd.DataFrame:
       - crash_3d_fwd: any 3-day cumulative <= -15%
       - dd_2m: within next 42 bdays, drawdown from trailing 252b peak <= -15%
     """
-    # forward window (use reverse rolling)
     r1 = sp500.pct_change(1)
     r3 = sp500.pct_change(3)
 
@@ -361,7 +360,10 @@ def main():
     run_date = jst_today_date()
     print(f"[run] date={run_date.isoformat()} {RUN_TZ_LABEL}")
 
-    idx = business_index(START_DATE, run_date)
+    # IMPORTANT: Align series on calendar days first (D),
+    # then convert to business days (B) for scoring/events.
+    idx_all = calendar_index(START_DATE, run_date)  # D
+    idx_biz = business_index(START_DATE, run_date)  # B
 
     raw = {}
     meta = {}
@@ -381,7 +383,7 @@ def main():
                 "stale": True,
                 "error": f"HTTPError {status}",
             }
-            raw[key] = pd.Series(np.nan, index=idx, name=key)
+            raw[key] = pd.Series(np.nan, index=idx_all, name=key)
             time.sleep(FRED_SLEEP_SEC)
             continue
         except Exception as e:
@@ -394,14 +396,15 @@ def main():
                 "stale": True,
                 "error": str(e),
             }
-            raw[key] = pd.Series(np.nan, index=idx, name=key)
+            raw[key] = pd.Series(np.nan, index=idx_all, name=key)
             time.sleep(FRED_SLEEP_SEC)
             continue
 
         last_obs = s.dropna().index.max() if s.dropna().shape[0] else pd.NaT
         stale_days, stale_flag = native_stale(freq_group, last_obs, run_date)
 
-        s_aligned = s.reindex(idx).ffill()
+        # calendar-day align so weekly Saturday obs doesn't get dropped
+        s_aligned = s.reindex(idx_all).ffill()
 
         raw[key] = s_aligned
         meta[key] = {
@@ -414,19 +417,20 @@ def main():
 
         time.sleep(FRED_SLEEP_SEC)
 
-    df_raw = pd.DataFrame(raw, index=idx)
+    # Calendar daily table
+    df_raw_all = pd.DataFrame(raw, index=idx_all)
+
+    # Business-day table for scoring/events (carry forward from daily)
+    df_raw = df_raw_all.reindex(idx_biz).ffill()
 
     # Compute z-scores for scoring series only (daily/weekly)
     z_map = {}
-    x_map = {}
 
     for key, (_, freq_group, kind, use_for_score) in SERIES.items():
         s = df_raw[key]
         x = compute_feature(kind, s)
-        x_map[key] = x
 
         if not use_for_score:
-            # reference-only: do not produce z for score
             continue
 
         # exclude if stale (method A)
@@ -436,7 +440,7 @@ def main():
         win = ROLL_WIN_WEEKLY if freq_group == "weekly" else ROLL_WIN_DAILY
         z_map[key] = rolling_z(x, win)
 
-    df_z = pd.DataFrame(z_map, index=idx)
+    df_z = pd.DataFrame(z_map, index=idx_biz)
 
     # Block scores (median of z within block)
     block_scores = {}
@@ -445,7 +449,7 @@ def main():
     for bname, keys in BLOCKS.items():
         present = [k for k in keys if k in df_z.columns]
         if not present:
-            block_scores[bname] = pd.Series(np.nan, index=idx)
+            block_scores[bname] = pd.Series(np.nan, index=idx_biz)
             block_rep[bname] = (None, float("nan"))
             continue
 
@@ -464,7 +468,7 @@ def main():
                 best_k = k
         block_rep[bname] = (best_k, best_z if best_k is not None else float("nan"))
 
-    df_block = pd.DataFrame(block_scores, index=idx)
+    df_block = pd.DataFrame(block_scores, index=idx_biz)
 
     # Combine blocks with equal weight, renormalize for missing blocks
     blocks_list = list(BLOCKS.keys())
@@ -488,11 +492,11 @@ def main():
     thr = quantile_thresholds(score)
     regime = score.apply(lambda v: regime_from_score(float(v), thr) if pd.notna(v) else None)
 
-    # Backtest: forward events within 2 months
+    # Backtest: forward events within 2 months (business day)
     events = compute_forward_events(df_raw["SP500"])
     bt = backtest_summary(score, regime, events)
 
-    latest_date = str(idx[-1].date())
+    latest_date = str(idx_biz[-1].date())
     latest_score = float(score.iloc[-1]) if pd.notna(score.iloc[-1]) else None
     latest_regime = str(regime.iloc[-1]) if pd.notna(regime.iloc[-1]) else None
 
@@ -509,7 +513,7 @@ def main():
     drivers.sort(key=lambda x: x["z"], reverse=True)
     drivers = drivers[:3]
 
-    # Reference snapshot (monthly/quarterly) - latest levels only
+    # Reference snapshot (monthly) - latest levels only (from business-day df_raw)
     reference = {}
     for key, (_, _, _, use_for_score) in SERIES.items():
         if use_for_score:
@@ -537,7 +541,7 @@ def main():
                 "dd_2m": f"{HORIZON_BDAYS}営業日以内に直近252営業日高値から{int(DD_2M*100)}%到達",
             },
             "stale_policy_A": STALE_DAYS,
-            "note": "スコア計算は日次・週次のみ。月次・四半期は参考表示のみ。",
+            "note": "スコア計算は日次・週次のみ。月次は参考表示のみ。週次が週末日付でも落ちないようにD→Bで整列。",
         },
     }
 
@@ -564,7 +568,7 @@ def main():
     hist = prune_history(hist, run_date, HISTORY_YEARS_TO_KEEP)
     history_save(hist_path, hist)
 
-    # Issues automation (same semantics: open while "危機")
+    # Issues automation (open while "危機")
     state_path = "data/state.json"
     state = read_json(state_path) or {
         "open_issue_number": None,
@@ -613,7 +617,7 @@ def main():
             lines.append(f"- {d['block']}: {k} ({fid}) z={d['z']:.2f}")
         lines.append("")
         lines.append("## stale（除外対象）")
-        stale_keys = [k for k, m in meta.items() if m.get("stale") and SERIES.get(k, (None,None,None,False))[3]]
+        stale_keys = [k for k, m in meta.items() if m.get("stale") and SERIES.get(k, (None, None, None, False))[3]]
         if stale_keys:
             for k in stale_keys:
                 m = meta[k]
