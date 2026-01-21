@@ -12,78 +12,91 @@ import numpy as np
 
 
 # =========================
-# Config
+# 2M Spec Config
 # =========================
 
 START_DATE = "2000-01-01"
-HISTORY_YEARS_TO_KEEP = 20  # rolling retention
-RUN_TZ_LABEL = "JST"  # label only (we run in UTC on Actions)
+RUN_TZ_LABEL = "JST"
+HISTORY_YEARS_TO_KEEP = 20
+
+# 2 months ≈ 42 business days
+HORIZON_BDAYS = 42
+
+# Crash definitions (2M monitoring)
+CRASH_1D = -0.10          # 1-day <= -10%
+CRASH_3D = -0.15          # 3-day cumulative <= -15%
+DD_2M = -0.15             # within 42 bdays, drawdown from trailing 252b peak <= -15%
+
+# Regime quantiles
+Q_PLAIN = 0.60
+Q_NOTICE = 0.80
+Q_ALERT = 0.92
+# "危機" >= P92
+
+SCORE_CENTER = 50.0
+SCORE_SCALE = 12.5
+Z_CLIP = 4.0
+
+# Use shorter rolling window than 10y because 2M horizon is short.
+ROLL_WIN_DAILY = 1260     # ~5 years business days
+ROLL_WIN_WEEKLY = 1260    # same index (we align to business days anyway)
+
+# Method A: fixed staleness thresholds
+STALE_DAYS = {
+    "daily": 7,
+    "weekly": 21,
+    "monthly": 120,     # reference only
+    "quarterly": 220,   # reference only
+}
+
+# FRED polite rate limit
+FRED_SLEEP_SEC = 0.60
+
 ISSUE_COOLDOWN_DAYS = 14
 
-# Regime quantiles (computed from backtest score distribution)
-Q_PLAIN = 0.60   # 平常 < P60
-Q_NOTICE = 0.80  # 注意  P60..P80
-Q_ALERT = 0.92   # 警戒  P80..P92
-# 危機 >= P92
 
-# Score scaling
-SCORE_CENTER = 50.0
-SCORE_SCALE = 12.5  # Score = 50 + 12.5*ScoreRaw
+# =========================
+# Series (scoring uses only daily/weekly)
+# =========================
 
-# z-score handling
-Z_CLIP = 4.0
-ROLL_WIN_DAILY = 2520   # ~10 years business days
-ROLL_WIN_QUARTERLY = 5040  # ~20 years business days (for very sparse series)
-
-# Staleness thresholds by "native" frequency category
-STALE_DAYS = {
-    "daily": 5,
-    "weekly": 14,
-    "monthly": 45,
-    "quarterly": 120,
-}
-
-# FRED series and features
-# feature_kind: larger => riskier after transform
+# key: (fred_id, freq_group, feature_kind, use_for_score)
 SERIES = {
-    # Core
-    "USSLIND":   ("USSLIND", "monthly",  "diff_6m_neg"),
-    "ICSA":      ("ICSA",    "weekly",   "log_diff_13w"),
-    "T10Y3M":    ("T10Y3M",  "daily",    "level_neg"),
-    "FEDFUNDS":  ("FEDFUNDS","monthly",  "diff_6m"),
-    "HYOAS":     ("BAMLH0A0HYM2", "daily","level"),
-    "SP500":     ("SP500",   "daily",    "ret_6m_neg"),
-    "VIX":       ("VIXCLS",  "daily",    "level"),
+    # Economy pulse (weekly) - core replacement
+    "WEI":     ("WEI", "weekly", "diff_4w_neg", True),
 
-    # Extended (default ON)
-    "NFCI":      ("NFCI",    "weekly",   "level"),
-    "ANFCI":     ("ANFCI",   "weekly",   "level"),
-    "STLFSI4":   ("STLFSI4", "weekly",   "level"),
-    "BAA10Y":    ("BAA10Y",  "daily",    "level"),
+    # Labor (weekly)
+    "ICSA":    ("ICSA", "weekly", "log_diff_4w", True),
+    "CCSA":    ("CCSA", "weekly", "log_diff_4w", True),
 
-    # Replacement for removed ISM series:
-    # NEWORDER: Nondefense Capital Goods Ex Aircraft
-    # DGORDER: Durable Goods
-    "NEWORDER":  ("NEWORDER","monthly",  "log_diff_6m_neg"),
-    "DGORDER":   ("DGORDER", "monthly",  "log_diff_6m_neg"),
+    # Rates / Curve (daily)
+    "T10Y3M":  ("T10Y3M", "daily", "level_neg", True),
 
-    "PERMIT":    ("PERMIT",  "monthly",  "log_diff_6m_neg"),
-    "AMTMNO":    ("AMTMNO",  "monthly",  "log_diff_6m_neg"),
-    "SLOOS_CI":  ("DRTSCILM","quarterly","level"),
+    # Credit (daily)
+    "HY_OAS":  ("BAMLH0A0HYM2", "daily", "level_plus_diff_1m", True),
+    "IG_OAS":  ("BAMLC0A0CM", "daily", "level_plus_diff_1m", True),
+
+    # Financial conditions (weekly)
+    "NFCI":    ("NFCI", "weekly", "level", True),
+    "STLFSI4": ("STLFSI4", "weekly", "level", True),
+
+    # Market stress (daily)
+    "VIX":     ("VIXCLS", "daily", "level", True),
+    "SP500":   ("SP500", "daily", "ret_2m_neg", True),
+
+    # Reference only (monthly/quarterly) - NOT used for score
+    "FEDFUNDS_REF": ("FEDFUNDS", "monthly", "diff_1m", False),
+    "UNRATE_REF":   ("UNRATE", "monthly", "diff_1m", False),
 }
 
-# Block definitions (median of z within block)
+# Blocks (equal weight; only blocks with at least 1 valid series participate)
 BLOCKS = {
-    "景気先行": ["USSLIND", "AMTMNO", "PERMIT", "NEWORDER", "DGORDER"],
-    "雇用":     ["ICSA"],
-    "金利政策": ["T10Y3M", "FEDFUNDS"],
-    "信用":     ["HYOAS", "BAA10Y", "SLOOS_CI"],
-    "ストレス": ["NFCI", "ANFCI", "STLFSI4", "VIX", "SP500"],
+    "景気パルス": ["WEI"],
+    "雇用":       ["ICSA", "CCSA"],
+    "金利":       ["T10Y3M"],
+    "信用":       ["HY_OAS", "IG_OAS"],
+    "金融ストレス": ["NFCI", "STLFSI4"],
+    "市場ストレス": ["VIX", "SP500"],
 }
-BLOCK_WEIGHT = 1.0 / len(BLOCKS)
-
-# FRED polite rate limit (<= 2 req/sec)
-FRED_SLEEP_SEC = 0.60
 
 
 # =========================
@@ -113,10 +126,7 @@ def load_secrets() -> dict:
     raw = os.environ.get("APP_SECRETS", "").strip()
     if not raw:
         raise RuntimeError("Missing APP_SECRETS env (set GitHub Secret APP_SECRETS as JSON).")
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"APP_SECRETS must be valid JSON. Error: {e}") from e
+    data = json.loads(raw)
     if "FRED_API_KEY" not in data or not data["FRED_API_KEY"]:
         raise RuntimeError("APP_SECRETS JSON must contain non-empty key: FRED_API_KEY")
     return data
@@ -134,7 +144,6 @@ def fred_get_series_obs(api_key: str, series_id: str, start_date: str) -> pd.Ser
         if r.status_code in (429, 500, 502, 503, 504):
             time.sleep(1.5 * (2 ** attempt))
             continue
-        # let caller handle 400/404 etc.
         r.raise_for_status()
         js = r.json()
         obs = js.get("observations", [])
@@ -158,35 +167,11 @@ def native_stale(freq_group: str, last_obs_date: pd.Timestamp, run_date: dt.date
     if pd.isna(last_obs_date):
         return (10**9, True)
     delta_days = (pd.Timestamp(run_date) - last_obs_date.normalize()).days
-    threshold = STALE_DAYS.get(freq_group, 14)
+    threshold = STALE_DAYS.get(freq_group, 21)
     return (delta_days, delta_days > threshold)
 
 def business_index(start: str, end_date: dt.date) -> pd.DatetimeIndex:
     return pd.bdate_range(pd.Timestamp(start), pd.Timestamp(end_date), freq="B")
-
-def compute_feature(kind: str, s: pd.Series) -> pd.Series:
-    b_6m = 126   # ~6 months in business days
-    b_13w = 65   # 13 weeks in business days
-
-    if kind == "level":
-        return s
-    if kind == "level_neg":
-        return -s
-    if kind == "diff_6m":
-        return s - s.shift(b_6m)
-    if kind == "diff_6m_neg":
-        return -(s - s.shift(b_6m))
-    if kind == "log_diff_6m_neg":
-        ls = np.log(s.replace(0, np.nan))
-        ls = ls.replace([np.inf, -np.inf], np.nan)
-        return -(ls - ls.shift(b_6m))
-    if kind == "log_diff_13w":
-        ls = np.log(s.replace(0, np.nan))
-        ls = ls.replace([np.inf, -np.inf], np.nan)
-        return ls - ls.shift(b_13w)
-    if kind == "ret_6m_neg":
-        return -(s.pct_change(b_6m))
-    raise ValueError(f"Unknown feature kind: {kind}")
 
 def rolling_z(x: pd.Series, win: int) -> pd.Series:
     mu = x.rolling(win, min_periods=max(30, win // 10)).mean()
@@ -215,6 +200,118 @@ def regime_from_score(score: float, thr: Dict[str, float]) -> str:
     if score < thr["P92"]:
         return "警戒"
     return "危機"
+
+def history_load(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        return pd.read_csv(f, parse_dates=["date"])
+
+def history_save(path: str, df: pd.DataFrame) -> None:
+    ensure_dir(os.path.dirname(path))
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        df.to_csv(f, index=False)
+
+def prune_history(df: pd.DataFrame, run_date: dt.date, years: int) -> pd.DataFrame:
+    if df.empty:
+        return df
+    cutoff = pd.Timestamp(run_date) - pd.DateOffset(years=years)
+    return df[df["date"] >= cutoff].copy()
+
+
+# =========================
+# Feature engineering (2M)
+# All outputs: larger => riskier
+# =========================
+
+def compute_feature(kind: str, s: pd.Series) -> pd.Series:
+    b_1w = 5
+    b_4w = 20
+    b_1m = 21
+    b_2m = 42
+
+    if kind == "level":
+        return s
+    if kind == "level_neg":
+        return -s
+
+    if kind == "diff_1m":
+        return s - s.shift(b_1m)
+    if kind == "diff_4w_neg":
+        return -(s - s.shift(b_4w))
+
+    if kind == "log_diff_4w":
+        ls = np.log(s.replace(0, np.nan))
+        ls = ls.replace([np.inf, -np.inf], np.nan)
+        return ls - ls.shift(b_4w)
+
+    if kind == "ret_2m_neg":
+        return -(s.pct_change(b_2m))
+
+    if kind == "level_plus_diff_1m":
+        # level + speed of widening (both risk-up)
+        return s + (s - s.shift(b_1m))
+
+    raise ValueError(f"Unknown feature kind: {kind}")
+
+
+# =========================
+# Event definitions (2M horizon)
+# =========================
+
+def compute_forward_events(sp500: pd.Series) -> pd.DataFrame:
+    """
+    For each date t, label whether within next HORIZON_BDAYS we observe:
+      - crash_1d_fwd: any 1-day <= -10%
+      - crash_3d_fwd: any 3-day cumulative <= -15%
+      - dd_2m: within next 42 bdays, drawdown from trailing 252b peak <= -15%
+    """
+    # forward window (use reverse rolling)
+    r1 = sp500.pct_change(1)
+    r3 = sp500.pct_change(3)
+
+    crash_1d = (r1 <= CRASH_1D).astype(int)
+    crash_3d = (r3 <= CRASH_3D).astype(int)
+
+    crash_1d_fwd = crash_1d[::-1].rolling(HORIZON_BDAYS, min_periods=1).max()[::-1].astype(int)
+    crash_3d_fwd = crash_3d[::-1].rolling(HORIZON_BDAYS, min_periods=1).max()[::-1].astype(int)
+
+    trailing_peak = sp500.rolling(252, min_periods=30).max()
+    dd_now = (sp500 / trailing_peak) - 1.0
+    dd_forward_min = dd_now[::-1].rolling(HORIZON_BDAYS, min_periods=10).min()[::-1]
+    dd_2m = (dd_forward_min <= DD_2M).astype(int)
+
+    return pd.DataFrame({
+        "crash_1d_fwd": crash_1d_fwd,
+        "crash_3d_fwd": crash_3d_fwd,
+        "dd_2m": dd_2m,
+    }, index=sp500.index)
+
+def backtest_summary(score: pd.Series, regime: pd.Series, events: pd.DataFrame) -> dict:
+    df = pd.DataFrame({"score": score, "regime": regime}).join(events, how="inner").dropna()
+    if df.empty:
+        return {"note": "no backtest data yet"}
+
+    crisis = df[df["regime"] == "危機"]
+    if crisis.empty:
+        return {
+            "crisis_days": 0,
+            "hit_rate_dd_2m": None,
+            "hit_rate_crash_1d_fwd": None,
+            "hit_rate_crash_3d_fwd": None,
+        }
+
+    return {
+        "crisis_days": int(len(crisis)),
+        "hit_rate_dd_2m": float(crisis["dd_2m"].mean()),
+        "hit_rate_crash_1d_fwd": float(crisis["crash_1d_fwd"].mean()),
+        "hit_rate_crash_3d_fwd": float(crisis["crash_3d_fwd"].mean()),
+    }
+
+
+# =========================
+# Issues automation
+# =========================
 
 def github_api_headers() -> Dict[str, str]:
     token = os.environ.get("GITHUB_TOKEN", "").strip()
@@ -252,64 +349,6 @@ def gh_close_issue(issue_number: int) -> None:
     r = requests.patch(url, headers=github_api_headers(), json={"state": "closed"}, timeout=30)
     r.raise_for_status()
 
-def history_load(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        return pd.DataFrame()
-    with gzip.open(path, "rt", encoding="utf-8") as f:
-        return pd.read_csv(f, parse_dates=["date"])
-
-def history_save(path: str, df: pd.DataFrame) -> None:
-    ensure_dir(os.path.dirname(path))
-    with gzip.open(path, "wt", encoding="utf-8") as f:
-        df.to_csv(f, index=False)
-
-def prune_history(df: pd.DataFrame, run_date: dt.date, years: int) -> pd.DataFrame:
-    if df.empty:
-        return df
-    cutoff = pd.Timestamp(run_date) - pd.DateOffset(years=years)
-    return df[df["date"] >= cutoff].copy()
-
-def compute_events(sp500: pd.Series) -> pd.DataFrame:
-    r1 = sp500.pct_change(1)
-    crash_1d = (r1 <= -0.10)
-
-    r3 = sp500.pct_change(3)
-    crash_3d = (r3 <= -0.20)
-
-    trailing_peak = sp500.rolling(252, min_periods=30).max()
-    dd_now = (sp500 / trailing_peak) - 1.0
-    dd_forward_min = dd_now[::-1].rolling(126, min_periods=10).min()[::-1]
-    dd_6m = (dd_forward_min <= -0.20)
-
-    return pd.DataFrame({
-        "crash_1d": crash_1d.astype(int),
-        "crash_3d": crash_3d.astype(int),
-        "dd_6m": dd_6m.astype(int),
-    }, index=sp500.index)
-
-def backtest_summary(score: pd.Series, regime: pd.Series, events: pd.DataFrame) -> dict:
-    df = pd.DataFrame({"score": score, "regime": regime}).join(events, how="inner").dropna()
-    if df.empty:
-        return {"note": "no backtest data yet"}
-    crisis = df[df["regime"] == "危機"]
-    if crisis.empty:
-        return {"crisis_days": 0, "hit_rate_dd_6m": None, "hit_rate_crash_1d": None, "hit_rate_crash_3d": None}
-    return {
-        "crisis_days": int(len(crisis)),
-        "hit_rate_dd_6m": float(crisis["dd_6m"].mean()),
-        "hit_rate_crash_1d": float(crisis["crash_1d"].mean()),
-        "hit_rate_crash_3d": float(crisis["crash_3d"].mean()),
-    }
-
-def top_drivers(per_block_rep: Dict[str, Tuple[str, float]]) -> List[dict]:
-    items = []
-    for b, (rep_key, rep_z) in per_block_rep.items():
-        if rep_key is None or rep_z is None or (isinstance(rep_z, float) and math.isnan(rep_z)):
-            continue
-        items.append({"block": b, "series_key": rep_key, "z": float(rep_z)})
-    items.sort(key=lambda x: x["z"], reverse=True)
-    return items[:3]
-
 
 # =========================
 # Main
@@ -327,14 +366,13 @@ def main():
     raw = {}
     meta = {}
 
-    for key, (fred_id, freq_group, _) in SERIES.items():
+    # Fetch all series (including reference-only)
+    for key, (fred_id, freq_group, _, _) in SERIES.items():
         try:
             s = fred_get_series_obs(api_key, fred_id, START_DATE)
         except requests.exceptions.HTTPError as e:
-            # Do not kill the run; mark as unavailable and exclude from score
             status = getattr(e.response, "status_code", None)
             print(f"[fred] skip {key} ({fred_id}): HTTP {status}")
-            s = pd.Series(dtype=float, index=pd.DatetimeIndex([], name="date"), name=fred_id)
             meta[key] = {
                 "fred_id": fred_id,
                 "freq_group": freq_group,
@@ -343,8 +381,8 @@ def main():
                 "stale": True,
                 "error": f"HTTPError {status}",
             }
-            time.sleep(FRED_SLEEP_SEC)
             raw[key] = pd.Series(np.nan, index=idx, name=key)
+            time.sleep(FRED_SLEEP_SEC)
             continue
         except Exception as e:
             print(f"[fred] skip {key} ({fred_id}): {e}")
@@ -356,8 +394,8 @@ def main():
                 "stale": True,
                 "error": str(e),
             }
-            time.sleep(FRED_SLEEP_SEC)
             raw[key] = pd.Series(np.nan, index=idx, name=key)
+            time.sleep(FRED_SLEEP_SEC)
             continue
 
         last_obs = s.dropna().index.max() if s.dropna().shape[0] else pd.NaT
@@ -378,26 +416,44 @@ def main():
 
     df_raw = pd.DataFrame(raw, index=idx)
 
-    zs = {}
-    for key, (_, freq_group, kind) in SERIES.items():
+    # Compute z-scores for scoring series only (daily/weekly)
+    z_map = {}
+    x_map = {}
+
+    for key, (_, freq_group, kind, use_for_score) in SERIES.items():
         s = df_raw[key]
         x = compute_feature(kind, s)
+        x_map[key] = x
 
+        if not use_for_score:
+            # reference-only: do not produce z for score
+            continue
+
+        # exclude if stale (method A)
         if meta.get(key, {}).get("stale", True):
             x = x * np.nan
 
-        win = ROLL_WIN_QUARTERLY if freq_group == "quarterly" else ROLL_WIN_DAILY
-        zs[key] = rolling_z(x, win)
+        win = ROLL_WIN_WEEKLY if freq_group == "weekly" else ROLL_WIN_DAILY
+        z_map[key] = rolling_z(x, win)
 
-    df_z = pd.DataFrame(zs, index=idx)
+    df_z = pd.DataFrame(z_map, index=idx)
 
+    # Block scores (median of z within block)
     block_scores = {}
     block_rep = {}
+
     for bname, keys in BLOCKS.items():
-        z_block = df_z[keys].copy()
+        present = [k for k in keys if k in df_z.columns]
+        if not present:
+            block_scores[bname] = pd.Series(np.nan, index=idx)
+            block_rep[bname] = (None, float("nan"))
+            continue
+
+        z_block = df_z[present].copy()
         bs = safe_median(z_block)
         block_scores[bname] = bs
 
+        # representative driver at latest date: max z
         latest_vals = z_block.iloc[-1].to_dict()
         best_k, best_z = None, float("-inf")
         for k, v in latest_vals.items():
@@ -410,11 +466,13 @@ def main():
 
     df_block = pd.DataFrame(block_scores, index=idx)
 
-    w = {b: BLOCK_WEIGHT for b in BLOCKS.keys()}
+    # Combine blocks with equal weight, renormalize for missing blocks
+    blocks_list = list(BLOCKS.keys())
+    w = {b: 1.0 / len(blocks_list) for b in blocks_list}
 
     def combine_row(row: pd.Series) -> float:
         vals = {}
-        for b in BLOCKS.keys():
+        for b in blocks_list:
             v = row.get(b)
             if v is None or (isinstance(v, float) and math.isnan(v)):
                 continue
@@ -428,57 +486,85 @@ def main():
     score = (SCORE_CENTER + SCORE_SCALE * score_raw).clip(lower=0, upper=100)
 
     thr = quantile_thresholds(score)
-    regime = score.apply(lambda v: regime_from_score(float(v), thr) if not (isinstance(v, float) and math.isnan(v)) else None)
+    regime = score.apply(lambda v: regime_from_score(float(v), thr) if pd.notna(v) else None)
 
-    events = compute_events(df_raw["SP500"])
+    # Backtest: forward events within 2 months
+    events = compute_forward_events(df_raw["SP500"])
     bt = backtest_summary(score, regime, events)
 
     latest_date = str(idx[-1].date())
     latest_score = float(score.iloc[-1]) if pd.notna(score.iloc[-1]) else None
     latest_regime = str(regime.iloc[-1]) if pd.notna(regime.iloc[-1]) else None
 
-    drivers = top_drivers(block_rep)
+    # coverage (how many blocks are valid today)
+    valid_blocks_today = int(pd.notna(df_block.iloc[-1]).sum())
+    coverage = valid_blocks_today / len(blocks_list)
+
+    # top drivers by block representative z
+    drivers = []
+    for b, (rep_key, rep_z) in block_rep.items():
+        if rep_key is None or rep_z is None or (isinstance(rep_z, float) and math.isnan(rep_z)):
+            continue
+        drivers.append({"block": b, "series_key": rep_key, "z": float(rep_z)})
+    drivers.sort(key=lambda x: x["z"], reverse=True)
+    drivers = drivers[:3]
+
+    # Reference snapshot (monthly/quarterly) - latest levels only
+    reference = {}
+    for key, (_, _, _, use_for_score) in SERIES.items():
+        if use_for_score:
+            continue
+        v = df_raw[key].iloc[-1]
+        reference[key] = None if (isinstance(v, float) and math.isnan(v)) else float(v)
 
     latest_obj = {
         "asof": latest_date,
+        "horizon_bdays": HORIZON_BDAYS,
         "score": latest_score,
         "regime": latest_regime,
+        "coverage": coverage,
         "thresholds": thr,
         "block_scores": {k: (None if pd.isna(df_block[k].iloc[-1]) else float(df_block[k].iloc[-1])) for k in df_block.columns},
         "top_drivers": drivers,
         "data_staleness": meta,
+        "reference_only": reference,
         "backtest_summary": bt,
         "definitions": {
             "regimes": ["平常", "注意", "警戒", "危機"],
             "events": {
-                "crash_1d": "1日リターン<=-10%",
-                "crash_3d": "3営業日累積リターン<=-20%",
-                "dd_6m": "126営業日以内に過去252営業日高値から-20%到達",
-            }
-        }
+                "crash_1d_fwd": f"{HORIZON_BDAYS}営業日以内に1日リターン<={int(CRASH_1D*100)}%",
+                "crash_3d_fwd": f"{HORIZON_BDAYS}営業日以内に3日累積リターン<={int(CRASH_3D*100)}%",
+                "dd_2m": f"{HORIZON_BDAYS}営業日以内に直近252営業日高値から{int(DD_2M*100)}%到達",
+            },
+            "stale_policy_A": STALE_DAYS,
+            "note": "スコア計算は日次・週次のみ。月次・四半期は参考表示のみ。",
+        },
     }
 
     ensure_dir("data")
     write_json("data/latest.json", latest_obj)
 
+    # history append (one row per run), keep 20 years
     hist_path = "data/history.csv.gz"
     hist = history_load(hist_path)
     new_row = {
         "date": pd.Timestamp(run_date),
         "score": latest_score,
         "regime": latest_regime,
+        "coverage": coverage,
         "P60": thr["P60"],
         "P80": thr["P80"],
         "P92": thr["P92"],
         "bt_crisis_days": bt.get("crisis_days"),
-        "bt_hit_dd_6m": bt.get("hit_rate_dd_6m"),
-        "bt_hit_crash_1d": bt.get("hit_rate_crash_1d"),
-        "bt_hit_crash_3d": bt.get("hit_rate_crash_3d"),
+        "bt_hit_dd_2m": bt.get("hit_rate_dd_2m"),
+        "bt_hit_crash_1d_fwd": bt.get("hit_rate_crash_1d_fwd"),
+        "bt_hit_crash_3d_fwd": bt.get("hit_rate_crash_3d_fwd"),
     }
     hist = pd.concat([hist, pd.DataFrame([new_row])], ignore_index=True)
     hist = prune_history(hist, run_date, HISTORY_YEARS_TO_KEEP)
     history_save(hist_path, hist)
 
+    # Issues automation (same semantics: open while "危機")
     state_path = "data/state.json"
     state = read_json(state_path) or {
         "open_issue_number": None,
@@ -507,27 +593,39 @@ def main():
         lines.append(f"- date: {latest_date}")
         lines.append(f"- score: {latest_score}")
         lines.append(f"- regime: {latest_regime}")
+        lines.append(f"- coverage: {coverage:.2f}")
         lines.append(f"- thresholds: P60={thr['P60']:.2f}, P80={thr['P80']:.2f}, P92={thr['P92']:.2f}")
         lines.append("")
-        lines.append("## ブロック別スコア")
-        for b in BLOCKS.keys():
+        lines.append("## 2か月イベント定義")
+        lines.append(f"- crash_1d_fwd: {HORIZON_BDAYS}営業日以内に1日<= {int(CRASH_1D*100)}%")
+        lines.append(f"- crash_3d_fwd: {HORIZON_BDAYS}営業日以内に3日累積<= {int(CRASH_3D*100)}%")
+        lines.append(f"- dd_2m: {HORIZON_BDAYS}営業日以内にピーク比 {int(DD_2M*100)}%")
+        lines.append("")
+        lines.append("## ブロック別スコア（z中央値）")
+        for b in blocks_list:
             v = latest_obj["block_scores"].get(b)
             lines.append(f"- {b}: {v}")
         lines.append("")
-        lines.append("## 上位ドライバー")
-        for d in drivers:
+        lines.append("## 上位ドライバー（危険方向）")
+        for d in latest_obj["top_drivers"]:
             k = d["series_key"]
             fid = meta.get(k, {}).get("fred_id") if k else None
             lines.append(f"- {d['block']}: {k} ({fid}) z={d['z']:.2f}")
         lines.append("")
         lines.append("## stale（除外対象）")
-        stale_keys = [k for k, m in meta.items() if m.get("stale")]
+        stale_keys = [k for k, m in meta.items() if m.get("stale") and SERIES.get(k, (None,None,None,False))[3]]
         if stale_keys:
             for k in stale_keys:
                 m = meta[k]
                 lines.append(f"- {k}: last_obs={m.get('last_obs_date')} stale_days={m.get('stale_days')} err={m.get('error')}")
         else:
             lines.append("- stale なし")
+        lines.append("")
+        lines.append("## バックテスト（2000年以降、2か月先の発生率）")
+        lines.append(f"- 危機日数: {bt.get('crisis_days')}")
+        lines.append(f"- 命中率 dd_2m: {bt.get('hit_rate_dd_2m')}")
+        lines.append(f"- 命中率 crash_1d_fwd: {bt.get('hit_rate_crash_1d_fwd')}")
+        lines.append(f"- 命中率 crash_3d_fwd: {bt.get('hit_rate_crash_3d_fwd')}")
         return "\n".join(lines)
 
     entered_crisis = (prev_regime != "危機") and (latest_regime == "危機")
@@ -538,8 +636,8 @@ def main():
             if in_cooldown(run_date):
                 print("[issue] Entered crisis but in cooldown; skipping.")
             else:
-                title = f"暴落リスク: 危機（{latest_date}）"
-                num = gh_create_issue(title, issue_body("危機に遷移しました。"))
+                title = f"暴落リスク: 危機（2か月監視）（{latest_date}）"
+                num = gh_create_issue(title, issue_body("危機に遷移しました（2か月先の暴落監視）。"))
                 state["open_issue_number"] = num
                 state["last_issue_date"] = latest_date
                 print(f"[issue] Created issue #{num}")
@@ -564,7 +662,7 @@ def main():
     write_json(state_path, state)
 
     print("[done] updated data/latest.json, data/history.csv.gz, data/state.json")
-    print(f"[result] score={latest_score} regime={latest_regime}")
+    print(f"[result] score={latest_score} regime={latest_regime} coverage={coverage:.2f}")
 
 
 if __name__ == "__main__":
