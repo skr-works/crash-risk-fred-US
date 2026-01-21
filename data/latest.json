@@ -1,0 +1,167 @@
+{
+  "asof": "2026-01-22",
+  "score": 44.25210285889635,
+  "regime": "平常",
+  "thresholds": {
+    "P60": 50.53561738842018,
+    "P80": 56.078273285257,
+    "P92": 64.56854504899955
+  },
+  "block_scores": {
+    "景気先行": null,
+    "雇用": null,
+    "金利政策": -0.19970852935810626,
+    "信用": -0.597571796013754,
+    "ストレス": -0.582214988493016
+  },
+  "top_drivers": [
+    {
+      "block": "ストレス",
+      "series_key": "VIX",
+      "z": 0.22085007781641455
+    },
+    {
+      "block": "信用",
+      "series_key": "SLOOS_CI",
+      "z": 0.0469778984971497
+    },
+    {
+      "block": "金利政策",
+      "series_key": "T10Y3M",
+      "z": -0.19970852935810626
+    }
+  ],
+  "data_staleness": {
+    "USSLIND": {
+      "fred_id": "USSLIND",
+      "freq_group": "monthly",
+      "last_obs_date": "2020-02-01",
+      "stale_days": 2182,
+      "stale": true
+    },
+    "ICSA": {
+      "fred_id": "ICSA",
+      "freq_group": "weekly",
+      "last_obs_date": "2026-01-10",
+      "stale_days": 12,
+      "stale": false
+    },
+    "T10Y3M": {
+      "fred_id": "T10Y3M",
+      "freq_group": "daily",
+      "last_obs_date": "2026-01-20",
+      "stale_days": 2,
+      "stale": false
+    },
+    "FEDFUNDS": {
+      "fred_id": "FEDFUNDS",
+      "freq_group": "monthly",
+      "last_obs_date": "2025-12-01",
+      "stale_days": 52,
+      "stale": true
+    },
+    "HYOAS": {
+      "fred_id": "BAMLH0A0HYM2",
+      "freq_group": "daily",
+      "last_obs_date": "2026-01-20",
+      "stale_days": 2,
+      "stale": false
+    },
+    "SP500": {
+      "fred_id": "SP500",
+      "freq_group": "daily",
+      "last_obs_date": "2026-01-20",
+      "stale_days": 2,
+      "stale": false
+    },
+    "VIX": {
+      "fred_id": "VIXCLS",
+      "freq_group": "daily",
+      "last_obs_date": "2026-01-20",
+      "stale_days": 2,
+      "stale": false
+    },
+    "NFCI": {
+      "fred_id": "NFCI",
+      "freq_group": "weekly",
+      "last_obs_date": "2026-01-09",
+      "stale_days": 13,
+      "stale": false
+    },
+    "ANFCI": {
+      "fred_id": "ANFCI",
+      "freq_group": "weekly",
+      "last_obs_date": "2026-01-09",
+      "stale_days": 13,
+      "stale": false
+    },
+    "STLFSI4": {
+      "fred_id": "STLFSI4",
+      "freq_group": "weekly",
+      "last_obs_date": "2026-01-09",
+      "stale_days": 13,
+      "stale": false
+    },
+    "BAA10Y": {
+      "fred_id": "BAA10Y",
+      "freq_group": "daily",
+      "last_obs_date": "2026-01-16",
+      "stale_days": 6,
+      "stale": true
+    },
+    "NEWORDER": {
+      "fred_id": "NEWORDER",
+      "freq_group": "monthly",
+      "last_obs_date": "2025-10-01",
+      "stale_days": 113,
+      "stale": true
+    },
+    "DGORDER": {
+      "fred_id": "DGORDER",
+      "freq_group": "monthly",
+      "last_obs_date": "2025-10-01",
+      "stale_days": 113,
+      "stale": true
+    },
+    "PERMIT": {
+      "fred_id": "PERMIT",
+      "freq_group": "monthly",
+      "last_obs_date": "2025-10-01",
+      "stale_days": 113,
+      "stale": true
+    },
+    "AMTMNO": {
+      "fred_id": "AMTMNO",
+      "freq_group": "monthly",
+      "last_obs_date": "2025-10-01",
+      "stale_days": 113,
+      "stale": true
+    },
+    "SLOOS_CI": {
+      "fred_id": "DRTSCILM",
+      "freq_group": "quarterly",
+      "last_obs_date": "2025-10-01",
+      "stale_days": 113,
+      "stale": false
+    }
+  },
+  "backtest_summary": {
+    "crisis_days": 524,
+    "hit_rate_dd_6m": 0.24427480916030533,
+    "hit_rate_crash_1d": 0.0019083969465648854,
+    "hit_rate_crash_3d": 0.0
+  },
+  "definitions": {
+    "regimes": [
+      "平常",
+      "注意",
+      "警戒",
+      "危機"
+    ],
+    "events": {
+      "crash_1d": "1日リターン<=-10%",
+      "crash_3d": "3営業日累積リターン<=-20%",
+      "dd_6m": "126営業日以内に過去252営業日高値から-20%到達"
+    }
+  }
+}
