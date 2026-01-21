@@ -1,4 +1,4 @@
-name: crash risk fred US
+name: Crash Risk Monitor (FRED, 2M)
 
 on:
   schedule:
