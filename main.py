@@ -41,7 +41,7 @@ STALE_DAYS = {
 # FRED polite rate limit
 FRED_SLEEP_SEC = 0.60
 
-# Fixed split (2000+ and includes crisis periods)
+# Fixed split (preferred)
 SPLIT_TRAIN_END = "2013-12-31"
 SPLIT_VAL_END = "2018-12-31"
 # Test is 2019-01-01 ~ last_label_date
@@ -59,15 +59,14 @@ SCORE_SCALE = 100.0
 # Issue automation
 ISSUE_COOLDOWN_DAYS = 14
 
+# Minimum rows after NaN filtering (tunable)
+# NOTE: 5000 is too strict when some series start late (e.g., WEI).
+MIN_ROWS = int(os.environ.get("MIN_ROWS", "1500"))
+
 
 # =========================
 # Series from FRED
 # =========================
-# key: (fred_id, freq_group, feature_kind, use_for_score)
-#
-# Note:
-# - weekly labor claims are switched to YoY (52w) w/ 4w MA to reduce seasonality noise.
-# - market-derived extra features are built from SP500 itself (still fully free).
 SERIES = {
     # Economy pulse (weekly)
     "WEI":     ("WEI", "weekly", "diff_4w_neg", True),
@@ -245,21 +244,14 @@ def zscore_past_only(x: pd.Series, win: int) -> pd.Series:
     return z.replace([np.inf, -np.inf], np.nan).clip(-6, 6)
 
 def pick_rolling_window(freq_group: str) -> int:
-    # stable normalization: ~5y window on business days
-    return 1260
+    return 1260  # ~5y on business days
 
 def compute_market_derived_features(spx: pd.Series) -> pd.DataFrame:
-    """
-    Derived features from SP500 level series (daily, business-aligned):
-      - SPX_RVOL_1M: 21d realized vol of daily returns (risk-up => higher)
-      - SPX_MDD_1M:  21d max drawdown (risk-up => larger drawdown magnitude)
-    """
     r = spx.pct_change()
     rvol_1m = r.rolling(21, min_periods=15).std()
 
     roll_max = spx.rolling(21, min_periods=15).max()
     dd = (spx / roll_max) - 1.0
-    # max drawdown in last 21 days (most negative), convert to positive magnitude
     mdd_1m = (-dd.rolling(21, min_periods=15).min())
 
     return pd.DataFrame({
@@ -273,12 +265,6 @@ def compute_market_derived_features(spx: pd.Series) -> pd.DataFrame:
 # =========================
 
 def compute_forward_events(sp500: pd.Series) -> pd.DataFrame:
-    """
-    For each business date t:
-      crash_1d_fwd: within next HORIZON_BDAYS, exists u such that (P[u+1]/P[u]-1) <= -10%
-      crash_30d_fwd: within next HORIZON_BDAYS, exists u such that (P[u+30]/P[u]-1) <= -30%
-      dd_2m: within next HORIZON_BDAYS, exists future date where (P/rolling252max - 1) <= -15%
-    """
     fwd1 = sp500.shift(-1) / sp500 - 1.0
     fwd30 = sp500.shift(-CRASH_30D_WINDOW) / sp500 - 1.0
 
@@ -300,7 +286,6 @@ def compute_forward_events(sp500: pd.Series) -> pd.DataFrame:
     }, index=sp500.index)
 
 def combine_prob_any(probs: Dict[str, pd.Series]) -> pd.Series:
-    # 1 - Π(1 - p_k)
     p = None
     for _, s in probs.items():
         if p is None:
@@ -319,10 +304,6 @@ def combine_prob_any(probs: Dict[str, pd.Series]) -> pd.Series:
 def train_logreg_ridge(X: np.ndarray, y: np.ndarray,
                        l2: float = 1.0, lr: float = 0.05,
                        epochs: int = 900, batch: int = 4096) -> Tuple[np.ndarray, float, dict]:
-    """
-    Minimizes: weighted logloss + 0.5*l2*||w||^2
-    Returns (w, b, stats)
-    """
     n, d = X.shape
     w = np.zeros(d, dtype=float)
     b = 0.0
@@ -419,17 +400,13 @@ def compute_metrics_for_threshold(p_any: pd.Series, events: pd.DataFrame, thr: f
         "crisis_share": float(crisis.mean()),
     }
 
-    # base rates
     for k in ["dd_2m", "crash_1d_fwd", "crash_30d_fwd"]:
         out[f"base_{k}"] = float(df[k].mean())
 
-    # hit rates conditional on crisis
     if crisis.sum() == 0:
         for k in ["dd_2m", "crash_1d_fwd", "crash_30d_fwd"]:
             out[f"hit_{k}"] = None
             out[f"lift_{k}"] = None
-        # confusion matrices still computable (all pred=0)
-        for k in ["dd_2m", "crash_1d_fwd", "crash_30d_fwd"]:
             out[f"cm_{k}"] = confusion_counts(crisis, df[k].astype(int))
         return out
 
@@ -456,23 +433,17 @@ def scan_thresholds(p_any: pd.Series, events: pd.DataFrame, percentiles: List[fl
     return out
 
 def pick_crisis_threshold(p_any_val: pd.Series, events_val: pd.DataFrame) -> Tuple[float, dict]:
-    """
-    Pick crisis threshold on validation set.
-    Objective (tune later):
-      obj = 2*hit_dd + 1.2*hit_crash30 + 0.6*hit_crash1d - 0.85*crisis_share
-    """
     df = pd.DataFrame({"p_any": p_any_val}).join(events_val, how="inner").dropna()
     if df.empty:
         return 0.99, {"note": "no data"}
 
     ps = df["p_any"].values
-    qs = np.linspace(0.80, 0.99, 20)  # scan 20%..1%
+    qs = np.linspace(0.80, 0.99, 20)
     best = {"obj": float("-inf"), "thr": None, "metrics": None}
 
     for q in qs:
         thr = float(np.quantile(ps, q))
         m = compute_metrics_for_threshold(df["p_any"], df[events_val.columns], thr)
-        # require at least 3 crisis days to avoid "one-off" cheating
         if m.get("crisis_days", 0) < 3:
             continue
         if m.get("hit_dd_2m") is None:
@@ -575,16 +546,14 @@ def main():
 
     run_date = jst_today_date()
     print(f"[run] date={run_date.isoformat()} {RUN_TZ_LABEL}")
+    print(f"[config] MIN_ROWS={MIN_ROWS}")
 
-    # Align series on calendar days first (D) so weekly Saturday obs doesn't drop,
-    # then convert to business days (B).
     idx_all = calendar_index(START_DATE, run_date)  # D
     idx_biz = business_index(START_DATE, run_date)  # B
 
     raw = {}
     meta = {}
 
-    # 1) Fetch all series
     for key, (fred_id, freq_group, _, _) in SERIES.items():
         try:
             s = fred_get_series_obs(api_key, fred_id, START_DATE)
@@ -619,7 +588,7 @@ def main():
         last_obs = s.dropna().index.max() if s.dropna().shape[0] else pd.NaT
         stale_days, stale_flag = native_stale(freq_group, last_obs, run_date)
 
-        s_aligned = s.reindex(idx_all).ffill()  # calendar align
+        s_aligned = s.reindex(idx_all).ffill()
         raw[key] = s_aligned
         meta[key] = {
             "fred_id": fred_id,
@@ -632,9 +601,8 @@ def main():
         time.sleep(FRED_SLEEP_SEC)
 
     df_raw_all = pd.DataFrame(raw, index=idx_all)
-    df_raw = df_raw_all.reindex(idx_biz).ffill()  # business-day view
+    df_raw = df_raw_all.reindex(idx_biz).ffill()
 
-    # 2) Build z-scored features (past-only)
     feat_z = {}
     feat_raw = {}
 
@@ -643,7 +611,6 @@ def main():
             continue
         x = compute_feature(kind, df_raw[key])
 
-        # stale exclusion for scoring features
         if meta.get(key, {}).get("stale", True):
             x = x * np.nan
 
@@ -653,7 +620,6 @@ def main():
         feat_raw[key] = x
         feat_z[key] = z
 
-    # extra features from SP500
     spx_extra = compute_market_derived_features(df_raw["SP500"])
     for k in EXTRA_FEATURE_KEYS:
         x = spx_extra[k]
@@ -663,16 +629,12 @@ def main():
 
     df_feat = pd.DataFrame(feat_z, index=idx_biz)
 
-    # 3) Events (forward)
     events = compute_forward_events(df_raw["SP500"])
-
-    # last label date: avoid using rows without enough forward window
     last_label_idx = events.dropna().index
     if last_label_idx.empty:
         raise RuntimeError("No events computed (SP500 too short).")
     last_label_date = last_label_idx.max()
 
-    # 4) Dataset
     ds = df_feat.join(events, how="inner")
 
     # valid rows: all features present AND events present
@@ -680,18 +642,28 @@ def main():
     ds = ds.loc[valid_mask].copy()
     ds = ds.dropna(subset=["dd_2m", "crash_1d_fwd", "crash_30d_fwd"])
 
-    if ds.empty or len(ds) < 5000:
-        raise RuntimeError("Not enough data after NaN filtering; check staleness or feature windows.")
+    # Diagnostics before failing
+    if ds.empty or len(ds) < MIN_ROWS:
+        diag = {
+            "rows_after_filter": int(len(ds)),
+            "required_min_rows": int(MIN_ROWS),
+            "feature_keys": FEATURE_KEYS,
+            "feature_non_nan_counts": {k: int(ds[k].notna().sum()) if k in ds.columns else 0 for k in FEATURE_KEYS},
+            "feature_raw_start_hint": {k: meta.get(k, {}).get("last_obs_date") for k in SERIES.keys()},
+            "ds_start": None if ds.empty else str(ds.index.min().date()),
+            "ds_end": None if ds.empty else str(ds.index.max().date()),
+        }
+        print("[diag] not enough rows after NaN filtering")
+        print(json.dumps(diag, ensure_ascii=False, indent=2))
+        raise RuntimeError("Not enough data after NaN filtering; check staleness, series coverage, or reduce MIN_ROWS.")
 
-    # enforce fixed split with last_label_date cap
+    if ds.index.max() < pd.Timestamp("2019-01-01"):
+        raise RuntimeError("Data does not reach 2019-01-01; split invalid.")
+
     end_ts = pd.Timestamp(last_label_date)
     train_end = pd.Timestamp(SPLIT_TRAIN_END)
     val_end = pd.Timestamp(SPLIT_VAL_END)
     test_start = pd.Timestamp("2019-01-01")
-
-    # if data doesn't reach these split points, fail loudly (do NOT degrade to val=test)
-    if ds.index.max() < test_start:
-        raise RuntimeError("Data does not reach 2019-01-01; split invalid.")
 
     train = ds[(ds.index <= train_end)]
     val = ds[(ds.index > train_end) & (ds.index <= val_end)]
@@ -704,10 +676,8 @@ def main():
     Xval = val[FEATURE_KEYS].to_numpy(dtype=float)
     Xte = test[FEATURE_KEYS].to_numpy(dtype=float)
 
-    # 5) Train 3 models separately
     model_stats = {}
     coefs = {}
-
     probs_all = {}
 
     targets = {
@@ -720,33 +690,26 @@ def main():
         ytr = train[ycol].to_numpy(dtype=int)
         w, b, st = train_logreg_ridge(Xtr, ytr, l2=LR_L2, lr=LR_LR, epochs=LR_EPOCHS, batch=LR_BATCH)
 
-        # store coefs (abs-sorted)
         coef_list = [{"feature": FEATURE_KEYS[i], "coef": float(w[i])} for i in range(len(FEATURE_KEYS))]
         coef_list.sort(key=lambda x: abs(x["coef"]), reverse=True)
         coefs[pname] = coef_list
-
-        # probs for whole ds (aligned)
-        Xall = ds[FEATURE_KEYS].to_numpy(dtype=float)
-        p = predict_prob(Xall, w, b)
-        pser = pd.Series(p, index=ds.index, name=pname)
-
-        probs_all[pname] = pser
         model_stats[pname] = st
 
-    # 6) Combine into any-event probability
+        Xall = ds[FEATURE_KEYS].to_numpy(dtype=float)
+        p = predict_prob(Xall, w, b)
+        probs_all[pname] = pd.Series(p, index=ds.index, name=pname)
+
     p_any = combine_prob_any({
         "dd": probs_all["p_dd_2m"],
         "c1": probs_all["p_crash_1d"],
         "c30": probs_all["p_crash_30d"],
     }).rename("p_any")
 
-    # 7) Pick thresholds on validation (and scans)
     p_any_val = p_any.loc[val.index]
     ev_val = events.loc[p_any_val.index][["dd_2m", "crash_1d_fwd", "crash_30d_fwd"]]
 
     thr_crisis, thr_pick_info = pick_crisis_threshold(p_any_val, ev_val)
 
-    # notice/alert are UI thresholds (percentile-based) to keep ordering stable
     pv = p_any_val.dropna()
     thr_notice = float(np.quantile(pv.values, 0.70))
     thr_alert = float(np.quantile(pv.values, 0.85))
@@ -755,7 +718,6 @@ def main():
 
     regime = regimes_from_thresholds(p_any, thr_notice, thr_alert, thr_crisis)
 
-    # 8) Backtest summaries
     scan_q = [0.80, 0.85, 0.90, 0.92, 0.94, 0.96, 0.98]
     scan_val = scan_thresholds(p_any_val, ev_val, scan_q)
 
@@ -768,9 +730,7 @@ def main():
 
     by_regime_test = summarize_by_regime(p_any_test, regime.loc[p_any_test.index], ev_test)
 
-    # 9) Latest snapshot
     asof = str(idx_biz[-1].date())
-
     latest_p_any = float(p_any.iloc[-1]) if pd.notna(p_any.iloc[-1]) else None
     latest_score = None if latest_p_any is None else float(SCORE_CENTER + SCORE_SCALE * latest_p_any)
     latest_regime = str(regime.iloc[-1]) if pd.notna(regime.iloc[-1]) else None
@@ -781,7 +741,6 @@ def main():
         "p_crash_30d": float(probs_all["p_crash_30d"].iloc[-1]) if pd.notna(probs_all["p_crash_30d"].iloc[-1]) else None,
     }
 
-    # Debug: latest raw/feature/z per base series + extras
     latest_detail = {}
     for k in FEATURE_KEYS:
         if k in SERIES:
@@ -810,7 +769,6 @@ def main():
             "stale_days": stale_days,
         }
 
-    # Reference-only latest levels
     reference = {}
     for key, (_, _, _, use_for_score) in SERIES.items():
         if use_for_score:
@@ -818,31 +776,20 @@ def main():
         v = df_raw[key].iloc[-1]
         reference[key] = None if (isinstance(v, float) and math.isnan(v)) else float(v)
 
-    # 10) Write latest.json (temporary verbose)
     latest_obj = {
         "asof": asof,
         "horizon_bdays": HORIZON_BDAYS,
-
-        # primary output
         "p_any": latest_p_any,
         "p_components": latest_p_components,
         "score": latest_score,
         "regime": latest_regime,
-
-        # thresholds in probability space
         "thresholds": {
             "notice_p": thr_notice,
             "alert_p": thr_alert,
             "crisis_p": thr_crisis,
         },
-
-        # staleness
         "data_staleness": meta,
-
-        # reference only
         "reference_only": reference,
-
-        # definitions
         "definitions": {
             "regimes": ["平常", "注意", "警戒", "危機"],
             "events": {
@@ -858,8 +805,6 @@ def main():
             },
             "note": "3モデル（dd / 1日-10 / 30日-30）を個別学習し、p_any=1-Π(1-p)で合成。月次は参考表示のみ。週次はD→B整列。",
         },
-
-        # backtest
         "backtest": {
             "windows": {
                 "train_start": str(train.index.min().date()),
@@ -878,8 +823,6 @@ def main():
             "threshold_scan_val": scan_val,
             "threshold_scan_test": scan_test,
         },
-
-        # model debug
         "debug": {
             "latest_features": latest_detail,
             "coef_abs_sorted": {
@@ -894,7 +837,6 @@ def main():
     ensure_dir("data")
     write_json("data/latest.json", latest_obj)
 
-    # 11) history append (one row per run), keep 20 years
     hist_path = "data/history.csv.gz"
     hist = history_load(hist_path)
     new_row = {
@@ -913,7 +855,6 @@ def main():
     hist = prune_history(hist, run_date, HISTORY_YEARS_TO_KEEP)
     history_save(hist_path, hist)
 
-    # 12) Issues automation
     state_path = "data/state.json"
     state = read_json(state_path) or {
         "open_issue_number": None,
