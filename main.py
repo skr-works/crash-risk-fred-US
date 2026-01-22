@@ -41,10 +41,10 @@ STALE_DAYS = {
 # FRED polite rate limit
 FRED_SLEEP_SEC = 0.60
 
-# Fixed split (preferred)
+# Fixed split (preferred; used only if feasible with actual data coverage)
 SPLIT_TRAIN_END = "2013-12-31"
 SPLIT_VAL_END = "2018-12-31"
-# Test is 2019-01-01 ~ last_label_date
+# Test is 2019-01-01 ~ last_label_date (if feasible)
 
 # Logistic regression training (numpy only)
 LR_L2 = 1.0
@@ -60,7 +60,7 @@ SCORE_SCALE = 100.0
 ISSUE_COOLDOWN_DAYS = 14
 
 # Minimum rows after NaN filtering (tunable)
-# NOTE: 5000 is too strict when some series start late (e.g., WEI).
+# NOTE: too strict values (e.g., 5000) will fail when a key series starts late (e.g., WEI).
 MIN_ROWS = int(os.environ.get("MIN_ROWS", "1500"))
 
 
@@ -120,7 +120,9 @@ def read_json(path: str) -> Optional[dict]:
         return json.load(f)
 
 def write_json(path: str, obj: dict) -> None:
-    ensure_dir(os.path.dirname(path))
+    d = os.path.dirname(path)
+    if d:
+        ensure_dir(d)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
 
@@ -244,6 +246,7 @@ def zscore_past_only(x: pd.Series, win: int) -> pd.Series:
     return z.replace([np.inf, -np.inf], np.nan).clip(-6, 6)
 
 def pick_rolling_window(freq_group: str) -> int:
+    _ = freq_group
     return 1260  # ~5y on business days
 
 def compute_market_derived_features(spx: pd.Series) -> pd.DataFrame:
@@ -448,9 +451,11 @@ def pick_crisis_threshold(p_any_val: pd.Series, events_val: pd.DataFrame) -> Tup
             continue
         if m.get("hit_dd_2m") is None:
             continue
+
         hit_dd = m["hit_dd_2m"] if m["hit_dd_2m"] is not None else 0.0
         hit_c30 = m["hit_crash_30d_fwd"] if m["hit_crash_30d_fwd"] is not None else 0.0
         hit_c1 = m["hit_crash_1d_fwd"] if m["hit_crash_1d_fwd"] is not None else 0.0
+
         obj = (2.0 * hit_dd + 1.2 * hit_c30 + 0.6 * hit_c1 - 0.85 * m["crisis_share"])
         if obj > best["obj"]:
             best = {"obj": float(obj), "thr": thr, "metrics": m}
@@ -546,7 +551,14 @@ def main():
 
     run_date = jst_today_date()
     print(f"[run] date={run_date.isoformat()} {RUN_TZ_LABEL}")
+
+    # Adaptive split size controls
+    MIN_TRAIN_SPLIT = int(os.environ.get("MIN_TRAIN_SPLIT", "1200"))
+    MIN_VAL_SPLIT   = int(os.environ.get("MIN_VAL_SPLIT", "400"))
+    MIN_TEST_SPLIT  = int(os.environ.get("MIN_TEST_SPLIT", "400"))
+
     print(f"[config] MIN_ROWS={MIN_ROWS}")
+    print(f"[config] MIN_TRAIN_SPLIT={MIN_TRAIN_SPLIT} MIN_VAL_SPLIT={MIN_VAL_SPLIT} MIN_TEST_SPLIT={MIN_TEST_SPLIT}")
 
     idx_all = calendar_index(START_DATE, run_date)  # D
     idx_biz = business_index(START_DATE, run_date)  # B
@@ -649,7 +661,6 @@ def main():
             "required_min_rows": int(MIN_ROWS),
             "feature_keys": FEATURE_KEYS,
             "feature_non_nan_counts": {k: int(ds[k].notna().sum()) if k in ds.columns else 0 for k in FEATURE_KEYS},
-            "feature_raw_start_hint": {k: meta.get(k, {}).get("last_obs_date") for k in SERIES.keys()},
             "ds_start": None if ds.empty else str(ds.index.min().date()),
             "ds_end": None if ds.empty else str(ds.index.max().date()),
         }
@@ -657,21 +668,103 @@ def main():
         print(json.dumps(diag, ensure_ascii=False, indent=2))
         raise RuntimeError("Not enough data after NaN filtering; check staleness, series coverage, or reduce MIN_ROWS.")
 
-    if ds.index.max() < pd.Timestamp("2019-01-01"):
-        raise RuntimeError("Data does not reach 2019-01-01; split invalid.")
+    # -----------------------------
+    # Split (fixed if feasible; else adaptive)
+    # -----------------------------
+    n_all = len(ds)
+    if n_all < (MIN_TRAIN_SPLIT + MIN_VAL_SPLIT + MIN_TEST_SPLIT):
+        diag = {
+            "n_all": int(n_all),
+            "need_at_least": int(MIN_TRAIN_SPLIT + MIN_VAL_SPLIT + MIN_TEST_SPLIT),
+            "min_train": MIN_TRAIN_SPLIT,
+            "min_val": MIN_VAL_SPLIT,
+            "min_test": MIN_TEST_SPLIT,
+            "ds_start": str(ds.index.min().date()),
+            "ds_end": str(ds.index.max().date()),
+        }
+        print("[diag] split impossible due to insufficient total rows")
+        print(json.dumps(diag, ensure_ascii=False, indent=2))
+        raise RuntimeError("Not enough total rows to split; relax features or reduce min split sizes.")
 
-    end_ts = pd.Timestamp(last_label_date)
+    split_mode = "fixed"
     train_end = pd.Timestamp(SPLIT_TRAIN_END)
-    val_end = pd.Timestamp(SPLIT_VAL_END)
+    val_end   = pd.Timestamp(SPLIT_VAL_END)
     test_start = pd.Timestamp("2019-01-01")
 
-    train = ds[(ds.index <= train_end)]
-    val = ds[(ds.index > train_end) & (ds.index <= val_end)]
-    test = ds[(ds.index >= test_start) & (ds.index <= end_ts)]
+    train_fixed = ds[(ds.index <= train_end)]
+    val_fixed   = ds[(ds.index > train_end) & (ds.index <= val_end)]
+    test_fixed  = ds[(ds.index >= test_start)]
 
-    if len(train) < 2000 or len(val) < 800 or len(test) < 800:
-        raise RuntimeError("Split produced too little data; do not fallback (evaluation would be meaningless).")
+    fixed_ok = (len(train_fixed) >= MIN_TRAIN_SPLIT and
+                len(val_fixed)   >= MIN_VAL_SPLIT and
+                len(test_fixed)  >= MIN_TEST_SPLIT)
 
+    if not fixed_ok:
+        split_mode = "adaptive"
+
+        # Adaptive split: keep chronological order and ensure minimum rows.
+        test_len = max(MIN_TEST_SPLIT, int(0.20 * n_all))
+        val_len  = max(MIN_VAL_SPLIT,  int(0.15 * n_all))
+
+        if (test_len + val_len + MIN_TRAIN_SPLIT) > n_all:
+            excess = (test_len + val_len + MIN_TRAIN_SPLIT) - n_all
+            shrink_val = min(excess, max(0, val_len - MIN_VAL_SPLIT))
+            val_len -= shrink_val
+            excess -= shrink_val
+            shrink_test = min(excess, max(0, test_len - MIN_TEST_SPLIT))
+            test_len -= shrink_test
+            excess -= shrink_test
+            if excess > 0:
+                diag = {
+                    "n_all": int(n_all),
+                    "min_train": MIN_TRAIN_SPLIT,
+                    "min_val": MIN_VAL_SPLIT,
+                    "min_test": MIN_TEST_SPLIT,
+                    "proposed_val": int(val_len),
+                    "proposed_test": int(test_len),
+                    "ds_start": str(ds.index.min().date()),
+                    "ds_end": str(ds.index.max().date()),
+                }
+                print("[diag] adaptive split still impossible")
+                print(json.dumps(diag, ensure_ascii=False, indent=2))
+                raise RuntimeError("Split impossible even after shrinking; reduce mins or widen data coverage.")
+
+        test_start_idx = n_all - test_len
+        val_start_idx  = test_start_idx - val_len
+
+        train_end = ds.index[val_start_idx - 1]
+        val_end   = ds.index[test_start_idx - 1]
+        test_start = ds.index[test_start_idx]
+
+        train = ds[(ds.index <= train_end)]
+        val   = ds[(ds.index > train_end) & (ds.index <= val_end)]
+        test  = ds[(ds.index >= test_start)]
+    else:
+        train, val, test = train_fixed, val_fixed, test_fixed
+
+    if len(train) < MIN_TRAIN_SPLIT or len(val) < MIN_VAL_SPLIT or len(test) < MIN_TEST_SPLIT:
+        diag = {
+            "split_mode": split_mode,
+            "train_rows": int(len(train)),
+            "val_rows": int(len(val)),
+            "test_rows": int(len(test)),
+            "min_train": MIN_TRAIN_SPLIT,
+            "min_val": MIN_VAL_SPLIT,
+            "min_test": MIN_TEST_SPLIT,
+            "train_range": [str(train.index.min().date()), str(train.index.max().date())] if len(train) else None,
+            "val_range": [str(val.index.min().date()), str(val.index.max().date())] if len(val) else None,
+            "test_range": [str(test.index.min().date()), str(test.index.max().date())] if len(test) else None,
+            "ds_start": str(ds.index.min().date()),
+            "ds_end": str(ds.index.max().date()),
+        }
+        print("[diag] split produced too little data")
+        print(json.dumps(diag, ensure_ascii=False, indent=2))
+        raise RuntimeError("Split produced too little data (after adaptive check).")
+
+    print(f"[split] mode={split_mode} train={len(train)} val={len(val)} test={len(test)} "
+          f"train_end={train_end.date()} val_end={val_end.date()} test_start={test_start.date()}")
+
+    # Train/val/test arrays
     Xtr = train[FEATURE_KEYS].to_numpy(dtype=float)
     Xval = val[FEATURE_KEYS].to_numpy(dtype=float)
     Xte = test[FEATURE_KEYS].to_numpy(dtype=float)
@@ -799,9 +892,12 @@ def main():
             },
             "stale_policy_A": STALE_DAYS,
             "split": {
-                "train_end": SPLIT_TRAIN_END,
-                "val_end": SPLIT_VAL_END,
-                "test_start": "2019-01-01",
+                "mode": split_mode,
+                "train_end": str(pd.Timestamp(train_end).date()),
+                "val_end": str(pd.Timestamp(val_end).date()),
+                "test_start": str(pd.Timestamp(test_start).date()),
+                "preferred_fixed": {"train_end": SPLIT_TRAIN_END, "val_end": SPLIT_VAL_END, "test_start": "2019-01-01"},
+                "min_sizes": {"train": MIN_TRAIN_SPLIT, "val": MIN_VAL_SPLIT, "test": MIN_TEST_SPLIT},
             },
             "note": "3モデル（dd / 1日-10 / 30日-30）を個別学習し、p_any=1-Π(1-p)で合成。月次は参考表示のみ。週次はD→B整列。",
         },
@@ -850,6 +946,7 @@ def main():
         "notice_p": thr_notice,
         "alert_p": thr_alert,
         "crisis_p": thr_crisis,
+        "split_mode": split_mode,
     }
     hist = pd.concat([hist, pd.DataFrame([new_row])], ignore_index=True)
     hist = prune_history(hist, run_date, HISTORY_YEARS_TO_KEEP)
@@ -884,6 +981,7 @@ def main():
         lines.append(f"- p_any: {latest_p_any}")
         lines.append(f"- score: {latest_score}")
         lines.append(f"- regime: {latest_regime}")
+        lines.append(f"- split_mode: {split_mode}")
         lines.append(f"- thresholds: notice={thr_notice:.4f} alert={thr_alert:.4f} crisis={thr_crisis:.4f}")
         lines.append("")
         lines.append("## p components")
