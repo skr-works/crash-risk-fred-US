@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  issues: write
 
 jobs:
   run:
@@ -16,6 +15,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 日付判定のために履歴を取得
+
+      - name: Prevent 60-day workflow suspension
+        run: |
+          # 最終コミット日時(UNIX時間)を取得
+          LAST_COMMIT_TIME=$(git log -1 --format=%ct)
+          CURRENT_TIME=$(date +%s)
+          
+          # 経過秒数を計算
+          DIFF_SECONDS=$((CURRENT_TIME - LAST_COMMIT_TIME))
+          
+          # 50日 = 50 * 24 * 60 * 60 = 4320000秒
+          THRESHOLD=4320000
+          
+          echo "Seconds since last commit: $DIFF_SECONDS"
+          
+          if [ $DIFF_SECONDS -gt $THRESHOLD ]; then
+            echo "Last commit was over 50 days ago. Pushing empty commit to keep workflow active."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "automated: keep workflow alive (50+ days inactivity)"
+            git push
+          else
+            echo "Last commit was within 50 days. No keepalive action needed."
+          fi
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -39,6 +64,9 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # ファイル変更がある場合のみコミット
           git add data/latest.json data/history.csv.gz data/state.json
-          git commit -m "update crash risk snapshot" || exit 0
+          git commit -m "update crash risk snapshot" || echo "No changes to commit"
+          # 先にKeepaliveでpushされている可能性があるためpull --rebase推奨だが、
+          # 同一ランナー内なのでそのままpushでも通常は通ります。念のため失敗回避。
           git push
