@@ -2,8 +2,8 @@ name: Crash Risk Monitor US FRED 2M
 
 on:
   schedule:
-    # 平日 06:33 JST = 前日 21:33 UTC
-    - cron: "33 21 * * 1-5"
+    # 平日 07:33 JST = 前日 22:33 UTC
+    - cron: "33 22 * * 1-5"
   workflow_dispatch:
 
 permissions:
